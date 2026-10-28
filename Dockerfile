@@ -4,7 +4,7 @@
 # at `/mcp` (confirmed by reading src/server/transport.ts and src/cmd/cmd.ts
 # at that tag -- the abandoned first attempt at this image used the wrong
 # subcommand, `http-stream`, which only existed in the 0.4.x line).
-FROM node:24-alpine
+FROM node:26-alpine
 
 ARG ARGOCD_MCP_VERSION=0.8.0
 
