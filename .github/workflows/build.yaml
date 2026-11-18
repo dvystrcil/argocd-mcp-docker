@@ -21,8 +21,11 @@ env:
   IMAGE_NAME: argocd-mcp
 
 jobs:
+  # Runs on PRs too, so the required `build` check is a real gate: a skipped
+  # required check counts as passing (homelab#2355). A PR builds every
+  # platform but fetches no secret, logs in nowhere, pushes nothing and
+  # cuts no release; those steps are gated on the event below.
   build:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: argocd-mcp-docker-runner
     permissions:
       contents: write
@@ -32,6 +35,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fetch secrets from Infisical
+        if: github.event_name != 'pull_request'
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
@@ -43,6 +47,7 @@ jobs:
           domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
 
       - name: Log in to Harbor (internal)
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.INTERNAL_REGISTRY }}
@@ -51,6 +56,7 @@ jobs:
 
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         id: app-token
+        if: github.event_name != 'pull_request'
         with:
           client-id: ${{ env.CICD_APP_CLIENT_ID }}
           private-key: ${{ env.CICD_APP_PRIVATE_KEY }}
@@ -78,11 +84,13 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
+          # A PR proves the image builds; it publishes nothing, and does not
+          # touch the Harbor cache (it holds no Harbor credentials).
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          cache-from: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/{2}:buildcache', env.INTERNAL_REGISTRY, env.PROJECT, env.IMAGE_NAME) || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/{2}:buildcache,mode=max', env.INTERNAL_REGISTRY, env.PROJECT, env.IMAGE_NAME) || '' }}
 
       - name: Summary
         run: |
@@ -91,7 +99,8 @@ jobs:
       - name: Create GitHub release
         # Patch++ off the latest release. Release-publish fires
         # docker-release.yaml which retags Harbor :dev as :X.Y.Z (no v).
-        if: github.event_name != 'workflow_dispatch' || inputs.release
+        # Never from a PR (the old `!= workflow_dispatch` test was true there).
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release)
         uses: dvystrcil/release-action@v1
         with:
           token: ${{ steps.app-token.outputs.token }}
